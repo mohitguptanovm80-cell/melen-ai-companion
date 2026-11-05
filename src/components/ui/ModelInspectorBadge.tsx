@@ -15,10 +15,8 @@ export const ModelInspectorBadge: React.FC<ModelInspectorBadgeProps> = ({
   onSelectClip,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [selectedClip, setSelectedClip] = useState<string | null>(null);
 
   const handleClipPress = (clip: string) => {
-    setSelectedClip(clip);
     onSelectClip(clip);
   };
 
@@ -71,15 +69,15 @@ export const ModelInspectorBadge: React.FC<ModelInspectorBadgeProps> = ({
             </View>
 
             <View style={styles.gridItem}>
-              <Text style={styles.gridLabel}>Auto-Fit Bounds (W×H×D)</Text>
+              <Text style={styles.gridLabel}>Normalized bounds (W×H×D)</Text>
               <Text style={styles.gridValue}>
-                {metadata.boundingBox.width}m × {metadata.boundingBox.height}m × {metadata.boundingBox.depth}m
+                {metadata.boundingBox.width.toFixed(2)} × {metadata.boundingBox.height.toFixed(2)} × {metadata.boundingBox.depth.toFixed(2)}
               </Text>
             </View>
           </View>
 
           <Text style={styles.sectionTitle}>
-            Embedded Animations ({metadata.animations.length}):
+            Embedded Animations ({metadata.animations.length}) · {metadata.triangleCount?.toLocaleString()} triangles:
           </Text>
 
           <ScrollView
@@ -88,7 +86,7 @@ export const ModelInspectorBadge: React.FC<ModelInspectorBadgeProps> = ({
             contentContainerStyle={styles.clipsScroll}
           >
             {metadata.animations.map((clip) => {
-              const isSelected = selectedClip === clip;
+              const isSelected = metadata.activeClipName === clip;
               return (
                 <TouchableOpacity
                   key={clip}
@@ -104,7 +102,7 @@ export const ModelInspectorBadge: React.FC<ModelInspectorBadgeProps> = ({
           </ScrollView>
 
           <Text style={styles.hintText}>
-            💡 Tip: Drag with 1 finger to rotate. Pinch with 2 fingers to zoom.
+            Drag to orbit · Pinch to zoom. Clip previews play once; speech takes priority.
           </Text>
         </View>
       )}

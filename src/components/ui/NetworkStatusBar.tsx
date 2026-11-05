@@ -32,8 +32,9 @@ export const NetworkStatusBar: React.FC<NetworkStatusBarProps> = ({
         <TouchableOpacity style={styles.actionBtn} onPress={onOpenSettings}>
           <Text style={styles.actionText}>Settings</Text>
         </TouchableOpacity>
-      ) : (
-        <TouchableOpacity style={styles.dismissBtn} onPress={onDismiss}>
+      ) : null}
+      {(
+        <TouchableOpacity style={styles.dismissBtn} onPress={onDismiss} accessibilityRole="button" accessibilityLabel="Dismiss error">
           <MaterialCommunityIcons name="close" size={16} color="#94a3b8" />
         </TouchableOpacity>
       )}

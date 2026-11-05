@@ -1,101 +1,51 @@
 import * as THREE from 'three';
-import { ModelMetadata } from '../types';
+import type { ModelMetadata } from '../types';
 
-export interface ResolvedAnimations {
-  idleName: string | null;
-  talkName: string | null;
-  allNames: string[];
-}
+export interface ResolvedAnimations { idleName: string | null; talkName: string | null; allNames: string[] }
 
-/**
- * Automatically centers and scales any 3D model regardless of its authoring units.
- * This guarantees that swapping the .glb model requires zero code changes.
- */
-export function normalizeModel(
-  scene: THREE.Object3D,
-  targetHeight: number = 2.5
-): ModelMetadata['boundingBox'] {
-  // Compute precise world bounding box
+// Normalize a wrapper, preserving the imported root's authored transforms and animation bindings.
+export function normalizeModel(scene: THREE.Object3D, targetSize = 2.2): ModelMetadata['boundingBox'] {
+  scene.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(scene);
-  const size = new THREE.Vector3();
-  const center = new THREE.Vector3();
-  box.getSize(size);
-  box.getCenter(center);
-
-  // Shift model so its ground is at y = 0 and horizontally centered
-  scene.position.x -= center.x;
-  scene.position.y -= box.min.y; // Pin feet to ground level (y = 0)
-  scene.position.z -= center.z;
-
-  // Scale model proportionally to standard viewport height
-  const maxDimension = Math.max(size.x, size.y, size.z);
-  if (maxDimension > 0) {
-    const scaleFactor = targetHeight / maxDimension;
-    scene.scale.setScalar(scaleFactor);
-  }
-
-  // Count triangles for debug stats
-  let triangles = 0;
-  scene.traverse((child) => {
-    if ((child as THREE.Mesh).isMesh) {
-      const mesh = child as THREE.Mesh;
-      if (mesh.geometry) {
-        triangles += mesh.geometry.index
-          ? mesh.geometry.index.count / 3
-          : mesh.geometry.attributes.position.count / 3;
-      }
-    }
-  });
-
-  return {
-    width: Number(size.x.toFixed(2)),
-    height: Number(size.y.toFixed(2)),
-    depth: Number(size.z.toFixed(2)),
-    center: {
-      x: Number(center.x.toFixed(2)),
-      y: Number(center.y.toFixed(2)),
-      z: Number(center.z.toFixed(2)),
-    },
-  };
+  if (box.isEmpty()) throw new Error('This GLB contains no visible mesh.');
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const scale = targetSize / Math.max(size.x, size.y, size.z, 0.001);
+  scene.scale.multiplyScalar(scale);
+  scene.position.set(-center.x * scale, -box.min.y * scale, -center.z * scale);
+  scene.updateMatrixWorld(true);
+  const fitted = new THREE.Box3().setFromObject(scene);
+  const fittedSize = fitted.getSize(new THREE.Vector3());
+  const fittedCenter = fitted.getCenter(new THREE.Vector3());
+  return { width: fittedSize.x, height: fittedSize.y, depth: fittedSize.z,
+    center: { x: fittedCenter.x, y: fittedCenter.y, z: fittedCenter.z } };
 }
 
-/**
- * Fuzzy animation discovery: Dynamically maps animation clips to 'idle' and 'talk'.
- * Ensures any external .glb model automatically works without hardcoded animation names.
- */
-export function resolveAnimationClips(
-  animations: THREE.AnimationClip[]
-): ResolvedAnimations {
-  if (!animations || animations.length === 0) {
-    return { idleName: null, talkName: null, allNames: [] };
-  }
+export function resolveAnimationClips(animations: THREE.AnimationClip[]): ResolvedAnimations {
+  const allNames = animations.map(clip => clip.name);
+  const find = (patterns: RegExp[]) => patterns.map(pattern => allNames.find(name => pattern.test(name))).find(Boolean) ?? null;
+  // Prefer a true idle, then a standing pose. Never choose Dance/Death just because it is first.
+  const idleName = find([/idle/i, /breathe|rest|wait/i, /standing|stand|default/i]);
+  const talkName = find([/talk|speak|dialogue|chat/i, /gesture/i, /^yes$/i, /wave/i]);
+  return { idleName, talkName, allNames };
+}
 
-  const allNames = animations.map((clip) => clip.name);
-
-  // Search patterns with prioritized regex
-  const idleRegex = /(idle|stand|wait|rest|breathe|default)/i;
-  const talkRegex = /(talk|speak|dialogue|chat|gesture|yes|wave|mouth)/i;
-
-  // Find idle candidate
-  let idleName = allNames.find((name) => idleRegex.test(name)) || null;
-
-  // Find talk candidate (preferring one distinct from idle)
-  let talkName =
-    allNames.find((name) => talkRegex.test(name) && name !== idleName) || null;
-
-  // Fallback defaults if no naming patterns match
-  if (!idleName && allNames.length > 0) {
-    idleName = allNames[0];
-  }
-  if (!talkName && allNames.length > 1) {
-    talkName = allNames[1];
-  } else if (!talkName) {
-    talkName = idleName;
-  }
-
-  return {
-    idleName,
-    talkName,
-    allNames,
-  };
+export function disposeObject(root: THREE.Object3D) {
+  const geometries = new Set<THREE.BufferGeometry>();
+  const materials = new Set<THREE.Material>();
+  const textures = new Set<THREE.Texture>();
+  const skeletons = new Set<THREE.Skeleton>();
+  root.traverse(object => {
+    const mesh = object as THREE.Mesh;
+    if (mesh.geometry) geometries.add(mesh.geometry);
+    if (mesh.material) (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach(material => {
+      materials.add(material);
+      Object.values(material).forEach(value => { if (value instanceof THREE.Texture) textures.add(value); });
+    });
+    if ((object as THREE.SkinnedMesh).isSkinnedMesh) skeletons.add((object as THREE.SkinnedMesh).skeleton);
+  });
+  textures.forEach(texture => texture.dispose());
+  materials.forEach(material => material.dispose());
+  geometries.forEach(geometry => geometry.dispose());
+  skeletons.forEach(skeleton => skeleton.dispose());
 }

@@ -1,5 +1,6 @@
 export type AssistantState =
   | 'idle'
+  | 'preparing'
   | 'listening'
   | 'thinking'
   | 'speaking'

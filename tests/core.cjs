@@ -1,0 +1,79 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const THREE = require('three');
+const { resolveAnimationClips, normalizeModel } = require('../.test-build/src/utils/modelHelpers');
+const { AnimationController } = require('../.test-build/src/components/3d/AnimationController');
+const { configureProvider, clearProvider, getProvider, providerRequest } = require('../.test-build/src/services/providerService');
+const { AIService } = require('../.test-build/src/services/aiService');
+const clip = name => new THREE.AnimationClip(name, 0.5, [new THREE.NumberKeyframeTrack('.rotation[x]', [0, 0.5], [0, 0.1])]);
+const tick = (controller, seconds) => { for (let i = 0; i < seconds * 60; i++) controller.update(1 / 60); };
+
+test('animation discovery never defaults to death or dance and prioritizes genuine speech', () => {
+  assert.deepEqual(resolveAnimationClips(['Dance','Death','Idle','Wave','Talking'].map(clip)), { idleName: 'Idle', talkName: 'Talking', allNames: ['Dance','Death','Idle','Wave','Talking'] });
+  assert.equal(resolveAnimationClips([clip('Death')]).idleName, null);
+  assert.equal(resolveAnimationClips([]).talkName, null);
+});
+test('normalization grounds and centers a replacement with authored transforms', () => {
+  const root = new THREE.Group(); const mesh = new THREE.Mesh(new THREE.BoxGeometry(3, 7, 2));
+  mesh.position.set(12, -5, 9); mesh.scale.setScalar(2); root.add(mesh);
+  const result = normalizeModel(root);
+  assert.ok(Math.abs(result.height - 2.2) < 1e-6);
+  const box = new THREE.Box3().setFromObject(root);
+  assert.ok(Math.abs(box.min.y) < 1e-6);
+  assert.ok(Math.abs(box.getCenter(new THREE.Vector3()).x) < 1e-6);
+  assert.equal(mesh.scale.x, 2);
+});
+test('preview completes into idle; speaking overrides preview and returns to idle', () => {
+  const root = new THREE.Group(), motion = new THREE.Group(); motion.add(root);
+  let active;
+  const controller = new AnimationController(root, motion, ['Idle','Jump','Talking'].map(clip), name => active = name);
+  assert.equal(active, 'Idle'); controller.preview('Jump'); assert.equal(active, 'Jump');
+  tick(controller, 1); assert.equal(active, 'Idle');
+  controller.preview('Jump'); controller.setTalking(true); assert.equal(active, 'Talking');
+  controller.preview('Jump'); assert.equal(active, 'Talking');
+  tick(controller, 2); assert.equal(active, 'Talking');
+  controller.setTalking(false); tick(controller, 1); assert.equal(active, 'Idle'); controller.dispose();
+});
+test('static fallback stays bounded over many cycles and settles after speech', () => {
+  const root = new THREE.Group(), motion = new THREE.Group(); motion.add(root);
+  const controller = new AnimationController(root, motion, [], () => {});
+  controller.setTalking(true); tick(controller, 120);
+  assert.ok(Math.abs(motion.position.y) <= 0.035);
+  controller.setTalking(false); tick(controller, 3); assert.ok(Math.abs(motion.rotation.y) < 0.001);
+  controller.dispose();
+});
+test('actual supplied GLB has 14 playable clips and supports preview completion', async () => {
+  const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader.js');
+  const data = fs.readFileSync('assets/models/RobotExpressive.glb');
+  const gltf = await new GLTFLoader().parseAsync(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength), '');
+  assert.equal(gltf.animations.length, 14);
+  const motion = new THREE.Group(); motion.add(gltf.scene); let active;
+  const controller = new AnimationController(gltf.scene, motion, gltf.animations, name => active = name);
+  for (const animation of gltf.animations) {
+    controller.preview(animation.name); tick(controller, animation.duration + 0.7); assert.equal(active, 'Idle');
+  }
+  controller.dispose();
+});
+test('provider rejects insecure configuration and forgets credentials', () => {
+  assert.throws(() => configureProvider({ baseUrl: 'http://example.com', apiKey: 'test', chatModel: 'test', transcriptionModel: 'test' }));
+  clearProvider(); assert.throws(getProvider, /Voice setup/);
+});
+test('real request path sends text, rejects blank replies and exposes offline/auth errors', async () => {
+  const originalFetch = global.fetch;
+  configureProvider({ baseUrl: 'https://example.com/v1', apiKey: 'test-only', chatModel: 'test', transcriptionModel: 'test' });
+  try {
+    global.fetch = async (url, options) => {
+      assert.equal(url, 'https://example.com/v1/chat/completions');
+      assert.equal(JSON.parse(options.body).messages[1].content, 'Actual user words');
+      return { ok: true, json: async () => ({ choices: [{ message: { content: 'Actual reply' } }] }) };
+    };
+    assert.equal(await new AIService().generateReply('Actual user words', new AbortController().signal), 'Actual reply');
+    global.fetch = async () => ({ ok: true, json: async () => ({ choices: [] }) });
+    await assert.rejects(new AIService().generateReply('Hi', new AbortController().signal), /empty reply/);
+    global.fetch = async () => { throw new TypeError('Network request failed'); };
+    await assert.rejects(providerRequest('/test', '{}', new AbortController().signal), /internet/);
+    global.fetch = async () => ({ ok: false, status: 401 });
+    await assert.rejects(providerRequest('/test', '{}', new AbortController().signal), /rejected access/);
+  } finally { global.fetch = originalFetch; clearProvider(); }
+});

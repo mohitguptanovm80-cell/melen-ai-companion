@@ -1,6 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, StyleSheet, TouchableOpacity, Text, Animated } from 'react-native';
-import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { AssistantState } from '../../types';
 
 interface VoiceControlsProps {
@@ -9,7 +9,7 @@ interface VoiceControlsProps {
 }
 
 export const VoiceControls: React.FC<VoiceControlsProps> = ({ state, onPress }) => {
-  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const [pulseAnim] = useState(() => new Animated.Value(1));
 
   useEffect(() => {
     if (state === 'listening' || state === 'speaking') {
@@ -36,10 +36,12 @@ export const VoiceControls: React.FC<VoiceControlsProps> = ({ state, onPress }) 
 
   const getStatusText = () => {
     switch (state) {
+      case 'preparing':
+        return 'Preparing microphone...';
       case 'listening':
         return 'Listening... (Tap when done)';
       case 'thinking':
-        return 'Thinking of reply...';
+        return 'Processing… (Tap to cancel)';
       case 'speaking':
         return 'Speaking (Tap to interrupt)';
       case 'error':
@@ -99,6 +101,9 @@ export const VoiceControls: React.FC<VoiceControlsProps> = ({ state, onPress }) 
           activeOpacity={0.8}
           style={[styles.micButton, { backgroundColor: getButtonColor() }]}
           onPress={onPress}
+          disabled={state === 'preparing'}
+          accessibilityRole="button"
+          accessibilityLabel={getStatusText()}
         >
           {state === 'thinking' ? (
             <MaterialCommunityIcons name="robot" size={32} color="#ffffff" />

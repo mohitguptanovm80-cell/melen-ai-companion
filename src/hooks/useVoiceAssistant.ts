@@ -1,166 +1,115 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
+import { AppState } from 'react-native';
 import { AssistantState, CharacterAction } from '../types';
 import { sttService } from '../services/speechToTextService';
 import { aiService } from '../services/aiService';
 import { ttsService } from '../services/textToSpeechService';
+import { ServiceError } from '../services/providerService';
 
 export function useVoiceAssistant() {
   const [state, setState] = useState<AssistantState>('idle');
+  const stateRef = useRef<AssistantState>('idle');
   const [characterAction, setCharacterAction] = useState<CharacterAction>('idle');
-  const [userText, setUserText] = useState<string>('');
-  const [aiText, setAiText] = useState<string>('');
+  const [userText, setUserText] = useState('');
+  const [aiText, setAiText] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [permissionDenied, setPermissionDenied] = useState<boolean>(false);
+  const [permissionDenied, setPermissionDenied] = useState(false);
+  const active = useRef<AbortController | null>(null);
+  const busy = useRef(false);
+  const recordingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transition = useCallback((next: AssistantState) => { stateRef.current = next; setState(next); }, []);
+  const clearTimer = useCallback(() => {
+    if (recordingTimer.current) clearTimeout(recordingTimer.current);
+    recordingTimer.current = null;
+  }, []);
+  const clearError = useCallback(() => {
+    setErrorMessage(null); setPermissionDenied(false);
+    if (stateRef.current === 'error') transition('idle');
+  }, [transition]);
+  const fail = useCallback((error: unknown, controller: AbortController) => {
+    if (active.current !== controller || controller.signal.aborted) return;
+    setCharacterAction('idle');
+    setPermissionDenied(error instanceof ServiceError && error.kind === 'permission');
+    setErrorMessage(error instanceof Error ? error.message : 'Something went wrong. Please retry.');
+    transition('error');
+  }, [transition]);
 
-  // Safety timer to prevent stuck speaking states
-  const speechTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancel = useCallback(async () => {
+    busy.current = true;
+    active.current?.abort(); active.current = null;
+    clearTimer();
+    setCharacterAction('idle'); transition('idle');
+    await Promise.allSettled([sttService.cancel(), ttsService.stop()]);
+    busy.current = false;
+  }, [clearTimer, transition]);
 
-  /**
-   * User taps microphone: Start listening or toggle off
-   */
+  const reply = useCallback(async (text: string, controller: AbortController) => {
+    const valid = () => active.current === controller && !controller.signal.aborted;
+    const response = await aiService.generateReply(text, controller.signal);
+    if (!valid()) return;
+    setAiText(response);
+    await ttsService.speak(response, controller.signal, () => {
+      if (valid()) { transition('speaking'); setCharacterAction('talk'); }
+    });
+    if (valid()) { transition('idle'); setCharacterAction('idle'); active.current = null; }
+  }, [transition]);
+
+  const finishRecordingAndProcess = useCallback(async () => {
+    if (busy.current || stateRef.current !== 'listening' || !active.current) return;
+    busy.current = true; clearTimer();
+    const controller = active.current;
+    transition('thinking');
+    busy.current = false;
+    try {
+      const text = await sttService.stopAndTranscribe(controller.signal);
+      if (active.current !== controller || controller.signal.aborted) return;
+      setUserText(text);
+      // Cancellation is available while the provider or TTS is working.
+      busy.current = false;
+      await reply(text, controller);
+    } catch (error) { fail(error, controller); }
+    finally { if (active.current === controller) busy.current = false; }
+  }, [clearTimer, fail, reply, transition]);
+
   const handleMicPress = useCallback(async () => {
-    // If speaking, interrupt and go to idle
-    if (state === 'speaking') {
-      await ttsService.stop();
-      setCharacterAction('idle');
-      setState('idle');
-      return;
-    }
-
-    if (state === 'listening') {
-      // User tapped again to finish talking
-      await finishRecordingAndProcess();
-      return;
-    }
-
-    if (state !== 'idle') return;
-
-    setErrorMessage(null);
-    setPermissionDenied(false);
-
-    const started = await sttService.startRecording();
-    if (started) {
-      setState('listening');
-      setUserText('Listening to your voice...');
-    } else {
-      setPermissionDenied(true);
-      setErrorMessage('Microphone access is required to speak with Melen.');
-      setState('error');
-    }
-  }, [state]);
-
-  /**
-   * Stop recording, transcribe user voice, call AI, speak reply
-   */
-  const finishRecordingAndProcess = async () => {
-    setState('thinking');
-    setUserText('Processing speech...');
-
-    const sttResult = await sttService.stopAndTranscribe();
-
-    if (!sttResult.success || !sttResult.text) {
-      setErrorMessage(sttResult.error || 'Could not understand audio.');
-      setState('error');
-      setTimeout(() => setState('idle'), 3000);
-      return;
-    }
-
-    const transcribed = sttResult.text;
-    setUserText(transcribed);
-
-    // Call LLM
+    if (busy.current) return;
+    if (stateRef.current === 'speaking' || stateRef.current === 'thinking') { await cancel(); return; }
+    if (stateRef.current === 'listening') { await finishRecordingAndProcess(); return; }
+    busy.current = true;
+    clearError(); setUserText(''); setAiText('');
+    const controller = new AbortController(); active.current = controller;
+    transition('preparing');
     try {
-      const reply = await aiService.generateReply(transcribed);
-      setAiText(reply);
+      await sttService.startRecording();
+      if (active.current !== controller || controller.signal.aborted) return;
+      transition('listening');
+      recordingTimer.current = setTimeout(() => { void finishRecordingAndProcess(); }, 60000);
+    } catch (error) { fail(error, controller); }
+    finally { if (active.current === controller) busy.current = false; }
+  }, [cancel, clearError, fail, finishRecordingAndProcess, transition]);
 
-      // Transition to speaking state and trigger 3D talking animation
-      setState('speaking');
-      setCharacterAction('talk');
+  const askQuestion = useCallback(async (text: string) => {
+    if (busy.current || !['idle', 'error'].includes(stateRef.current)) return;
+    clearError(); setUserText(text); setAiText(''); transition('thinking');
+    const controller = new AbortController(); active.current = controller;
+    try { await reply(text, controller); } catch (error) { fail(error, controller); }
+  }, [clearError, fail, reply, transition]);
 
-      await ttsService.speak(reply, {
-        onStart: () => {
-          setCharacterAction('talk');
-        },
-        onDone: () => {
-          // Assignment requirement: "returns to idle when done"
-          setCharacterAction('idle');
-          setState('idle');
-          if (speechTimeoutRef.current) clearTimeout(speechTimeoutRef.current);
-        },
-        onError: (err) => {
-          console.error('[useVoiceAssistant] TTS error:', err);
-          setCharacterAction('idle');
-          setState('idle');
-        },
-      });
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', next => {
+      if (next === 'background') void cancel();
+      if (next === 'active' && stateRef.current === 'error') clearError();
+    });
+    return () => {
+      subscription.remove(); active.current?.abort(); active.current = null; clearTimer();
+      void sttService.cancel(); void ttsService.stop().catch(() => {});
+    };
+  }, [cancel, clearError, clearTimer]);
 
-      // Fallback timeout in case TTS callback drops
-      speechTimeoutRef.current = setTimeout(() => {
-        setCharacterAction('idle');
-        setState((current) => (current === 'speaking' ? 'idle' : current));
-      }, 15000);
-    } catch (err: any) {
-      setErrorMessage('Network or AI service unavailable.');
-      setState('error');
-      setCharacterAction('idle');
-      setTimeout(() => setState('idle'), 3000);
-    }
-  };
+  const openSettings = useCallback(() => {
+    void sttService.openSystemSettings().catch(() => setErrorMessage('Open your device Settings and enable microphone access for Melen.'));
+  }, []);
 
-  /**
-   * Quick-send text query for testing or manual prompt entry
-   */
-  const askQuestion = useCallback(async (promptText: string) => {
-    if (state !== 'idle') return;
-
-    setUserText(promptText);
-    setState('thinking');
-
-    try {
-      const reply = await aiService.generateReply(promptText);
-      setAiText(reply);
-
-      setState('speaking');
-      setCharacterAction('talk');
-
-      await ttsService.speak(reply, {
-        onStart: () => setCharacterAction('talk'),
-        onDone: () => {
-          setCharacterAction('idle');
-          setState('idle');
-        },
-        onError: () => {
-          setCharacterAction('idle');
-          setState('idle');
-        },
-      });
-    } catch (e) {
-      setErrorMessage('Failed to generate reply.');
-      setState('error');
-      setCharacterAction('idle');
-    }
-  }, [state]);
-
-  const openSettings = () => {
-    sttService.openSystemSettings();
-  };
-
-  const clearError = () => {
-    setErrorMessage(null);
-    setState('idle');
-  };
-
-  return {
-    state,
-    characterAction,
-    userText,
-    aiText,
-    errorMessage,
-    permissionDenied,
-    handleMicPress,
-    stopListening: finishRecordingAndProcess,
-    askQuestion,
-    openSettings,
-    clearError,
-  };
+  return { state, characterAction, userText, aiText, errorMessage, permissionDenied,
+    handleMicPress, askQuestion, openSettings, clearError, cancel };
 }

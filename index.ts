@@ -1,8 +1,7 @@
-import { registerRootComponent } from 'expo';
+import { LogBox } from 'react-native';
 
-import App from './App';
+// Optional floating-point render targets are unavailable on some mobile GPUs.
+// This viewer uses the default framebuffer and does not require that extension.
+LogBox.ignoreLogs(['THREE.WebGLRenderer: EXT_color_buffer_float extension not supported.']);
 
-// registerRootComponent calls AppRegistry.registerComponent('main', () => App);
-// It also ensures that whether you load the app in Expo Go or in a native build,
-// the environment is set up appropriately
-registerRootComponent(App);
+import 'expo-router/entry';

@@ -1,142 +1,87 @@
-import { Audio } from 'expo-av';
-import { Linking, Platform } from 'react-native';
+import { AudioModule, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
+import type { AudioRecorder } from 'expo-audio';
+import { File } from 'expo-file-system';
+import { Linking } from 'react-native';
+import { getProvider, providerRequest, ServiceError } from './providerService';
 
-export interface STTResult {
-  text: string;
-  success: boolean;
-  error?: string;
+function deleteRecording(uri: string | null) {
+  if (!uri) return;
+  try { const file = new File(uri); if (file.exists) file.delete(); } catch { /* Cache cleanup is best effort. */ }
 }
 
 export class SpeechToTextService {
-  private recording: Audio.Recording | null = null;
-  private apiKey: string | null = null;
+  private recorder: AudioRecorder | null = null;
+  private generation = 0;
 
-  public setApiKey(key: string) {
-    this.apiKey = key;
-  }
-
-  /**
-   * Request microphone permissions with status check
-   */
-  public async requestPermissions(): Promise<boolean> {
+  public async startRecording(): Promise<void> {
+    getProvider();
+    const generation = ++this.generation;
+    const { granted } = await requestRecordingPermissionsAsync();
+    if (generation !== this.generation) return;
+    if (!granted) throw new ServiceError('Microphone permission is denied. Enable it in Settings, then tap Retry.', 'permission');
+    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+    if (generation !== this.generation) {
+      await setAudioModeAsync({ allowsRecording: false });
+      return;
+    }
+    // AudioModule is a typed native object; ESLint's static namespace resolver cannot inspect it.
+    // eslint-disable-next-line import/namespace
+    const recorder = new AudioModule.AudioRecorder(RecordingPresets.HIGH_QUALITY);
     try {
-      const { status } = await Audio.requestPermissionsAsync();
-      return status === 'granted';
-    } catch (err) {
-      console.error('[STT] Permission check failed:', err);
-      return false;
+      await recorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
+      if (generation !== this.generation) {
+        deleteRecording(recorder.uri);
+        recorder.release();
+        await setAudioModeAsync({ allowsRecording: false });
+        return;
+      }
+      recorder.record();
+      this.recorder = recorder;
+    } catch {
+      deleteRecording(recorder.uri);
+      recorder.release();
+      await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
+      throw new ServiceError('Could not start recording. Check that the microphone is available and retry.');
     }
   }
 
-  /**
-   * Start recording user voice
-   */
-  public async startRecording(): Promise<boolean> {
+  public async stopAndTranscribe(signal: AbortSignal): Promise<string> {
+    const recorder = this.recorder;
+    this.recorder = null;
+    if (!recorder) throw new ServiceError('No recording is available. Tap the microphone to try again.');
+    let uri: string | null = null;
     try {
-      const hasPermission = await this.requestPermissions();
-      if (!hasPermission) {
-        return false;
-      }
-
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-      });
-
-      const { recording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
-      this.recording = recording;
-      return true;
-    } catch (err) {
-      console.error('[STT] Failed to start recording:', err);
-      this.recording = null;
-      return false;
+      await recorder.stop();
+      uri = recorder.uri;
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+      if (!uri) throw new ServiceError('The recording is empty. Please try again.');
+      const body = new FormData();
+      body.append('file', { uri, name: 'recording.m4a', type: 'audio/mp4' } as unknown as Blob);
+      body.append('model', getProvider().transcriptionModel);
+      // fetch supplies the multipart boundary. Do not manually set Content-Type.
+      const data = await providerRequest('/audio/transcriptions', body, signal) as { text?: unknown };
+      if (typeof data?.text !== 'string' || !data.text.trim()) throw new ServiceError('No speech was recognized. Please speak clearly and retry.');
+      return data.text.trim();
+    } finally {
+      uri ??= recorder.uri;
+      recorder.release();
+      deleteRecording(uri);
+      await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
     }
   }
 
-  /**
-   * Stop recording and transcribe audio
-   */
-  public async stopAndTranscribe(): Promise<STTResult> {
-    try {
-      if (!this.recording) {
-        return { text: '', success: false, error: 'No active recording found' };
-      }
-
-      await this.recording.stopAndUnloadAsync();
-      const uri = this.recording.getURI();
-      this.recording = null;
-
-      // Re-enable playback audio mode
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-      });
-
-      if (!uri) {
-        return { text: '', success: false, error: 'Recording file missing' };
-      }
-
-      // If remote Whisper API key exists, call Whisper API
-      if (this.apiKey) {
-        const transcribed = await this.callWhisperApi(uri);
-        return { text: transcribed, success: true };
-      }
-
-      // Default demo prompt for evaluators if no Whisper key is injected
-      // Simulates real spoken question as described in assignment example: "Hi, how was your day?"
-      const sampleQueries = [
-        'Hi, how was your day?',
-        'Tell me a fun robot joke!',
-        'Can you show me a cool dance?',
-        'Who are you and what can you do?',
-      ];
-      const randomQuery = sampleQueries[Math.floor(Math.random() * sampleQueries.length)];
-
-      return { text: randomQuery, success: true };
-    } catch (err: any) {
-      console.error('[STT] Error during stop & transcribe:', err);
-      return { text: '', success: false, error: err?.message || 'Transcription error' };
+  public async cancel(): Promise<void> {
+    ++this.generation;
+    const recorder = this.recorder;
+    this.recorder = null;
+    if (recorder) {
+      try { await recorder.stop(); } catch { /* Already stopped by the OS. */ }
+      deleteRecording(recorder.uri);
+      recorder.release();
     }
+    await setAudioModeAsync({ allowsRecording: false }).catch(() => {});
   }
 
-  private async callWhisperApi(fileUri: string): Promise<string> {
-    const formData = new FormData();
-    const uriParts = fileUri.split('.');
-    const fileType = uriParts[uriParts.length - 1];
-
-    formData.append('file', {
-      uri: fileUri,
-      name: `recording.${fileType}`,
-      type: `audio/${fileType}`,
-    } as any);
-    formData.append('model', 'whisper-1');
-
-    const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        'Content-Type': 'multipart/form-data',
-      },
-      body: formData,
-    });
-
-    if (!res.ok) {
-      throw new Error(`Whisper API failed with code ${res.status}`);
-    }
-
-    const data = await res.json();
-    return data.text || '';
-  }
-
-  public openSystemSettings() {
-    if (Platform.OS === 'ios') {
-      Linking.openURL('app-settings:');
-    } else {
-      Linking.openSettings();
-    }
-  }
+  public openSystemSettings() { return Linking.openSettings(); }
 }
-
 export const sttService = new SpeechToTextService();

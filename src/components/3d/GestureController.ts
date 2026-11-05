@@ -1,7 +1,7 @@
-import { PanResponder, GestureResponderEvent, PanResponderGestureState } from 'react-native';
+import { PanResponder, GestureResponderEvent } from 'react-native';
 
 export interface GestureState {
-  rotateX: number; // Polar angle (vertical rotation in radians)
+  rotateX: number; // Polar angle (vertical rotation in radians, where ~1.45 is eye-level)
   rotateY: number; // Azimuthal angle (horizontal rotation in radians)
   distance: number; // Camera distance / zoom
 }
@@ -19,6 +19,8 @@ export interface GestureOptions {
 
 export class TouchOrbitControls {
   private state: GestureState;
+  private initial: GestureState;
+  private touchCount = 0;
   private minDistance: number;
   private maxDistance: number;
   private minPolarAngle: number;
@@ -32,17 +34,18 @@ export class TouchOrbitControls {
   private initialPinchZoom = 0;
 
   constructor(options: GestureOptions = {}) {
-    this.minDistance = options.minDistance ?? 1.5;
+    this.minDistance = options.minDistance ?? 1.8;
     this.maxDistance = options.maxDistance ?? 6.0;
-    this.minPolarAngle = options.minPolarAngle ?? 0.1;
-    this.maxPolarAngle = options.maxPolarAngle ?? Math.PI / 2 + 0.3; // Prevent flipping upside down
+    this.minPolarAngle = options.minPolarAngle ?? 0.3;
+    this.maxPolarAngle = options.maxPolarAngle ?? Math.PI / 2 + 0.15; // Prevent flipping below floor ground
     this.onUpdate = options.onUpdate;
 
     this.state = {
-      rotateX: options.initialRotateX ?? 0.2,
+      rotateX: options.initialRotateX ?? 1.45, // Eye-level viewing angle
       rotateY: options.initialRotateY ?? 0,
       distance: options.initialDistance ?? 3.5,
     };
+    this.initial = { ...this.state };
   }
 
   public getState(): GestureState {
@@ -54,12 +57,15 @@ export class TouchOrbitControls {
     this.notify();
   }
 
+  public setInitialDistance(distance: number) {
+    this.initial.distance = distance;
+    this.minDistance = distance * 0.5;
+    this.maxDistance = distance * 2.5;
+    this.setDistance(distance);
+  }
+
   public reset() {
-    this.state = {
-      rotateX: 0.2,
-      rotateY: 0,
-      distance: 3.5,
-    };
+    this.state = { ...this.initial };
     this.notify();
   }
 
@@ -76,17 +82,12 @@ export class TouchOrbitControls {
 
       onPanResponderGrant: (evt: GestureResponderEvent) => {
         const touches = evt.nativeEvent.touches;
-        if (touches.length === 1) {
-          this.prevTouchX = touches[0].pageX;
-          this.prevTouchY = touches[0].pageY;
-        } else if (touches.length === 2) {
-          this.initialPinchDist = this.getDistanceBetweenTouches(touches);
-          this.initialPinchZoom = this.state.distance;
-        }
+        this.beginTouches(touches);
       },
 
-      onPanResponderMove: (evt: GestureResponderEvent, gestureState: PanResponderGestureState) => {
+      onPanResponderMove: (evt: GestureResponderEvent) => {
         const touches = evt.nativeEvent.touches;
+        if (touches.length !== this.touchCount) { this.beginTouches(touches); return; }
 
         if (touches.length === 1) {
           // 1 Finger: Orbit Rotation
@@ -111,25 +112,38 @@ export class TouchOrbitControls {
         } else if (touches.length === 2) {
           // 2 Fingers: Pinch to Zoom
           const currentDist = this.getDistanceBetweenTouches(touches);
-          if (this.initialPinchDist > 0) {
-            const factor = this.initialPinchDist / currentDist;
-            const newDist = this.initialPinchZoom * factor;
-            this.state.distance = Math.min(
-              Math.max(newDist, this.minDistance),
+          if (this.initialPinchDist > 0 && currentDist > 0) {
+            const scale = this.initialPinchDist / currentDist;
+            const newDistance = Math.min(
+              Math.max(this.initialPinchZoom * scale, this.minDistance),
               this.maxDistance
             );
+            this.state.distance = newDistance;
             this.notify();
           }
         }
       },
 
+      onPanResponderTerminate: () => { this.touchCount = 0; this.initialPinchDist = 0; },
       onPanResponderRelease: () => {
         this.initialPinchDist = 0;
+        this.touchCount = 0;
       },
     });
   }
 
-  private getDistanceBetweenTouches(touches: readonly any[]): number {
+  private beginTouches(touches: readonly { pageX: number; pageY: number }[]) {
+    this.touchCount = touches.length;
+    this.initialPinchDist = 0;
+    if (touches.length === 1) {
+      this.prevTouchX = touches[0].pageX; this.prevTouchY = touches[0].pageY;
+    } else if (touches.length === 2) {
+      this.initialPinchDist = this.getDistanceBetweenTouches(touches);
+      this.initialPinchZoom = this.state.distance;
+    }
+  }
+
+  private getDistanceBetweenTouches(touches: readonly { pageX: number; pageY: number }[]): number {
     const dx = touches[0].pageX - touches[1].pageX;
     const dy = touches[0].pageY - touches[1].pageY;
     return Math.sqrt(dx * dx + dy * dy);
