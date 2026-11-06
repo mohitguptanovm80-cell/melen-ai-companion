@@ -50,6 +50,16 @@ test('actual supplied GLB has 14 playable clips and supports preview completion'
   assert.equal(gltf.animations.length, 14);
   const motion = new THREE.Group(); motion.add(gltf.scene); let active;
   const controller = new AnimationController(gltf.scene, motion, gltf.animations, name => active = name);
+  controller.walk();
+  tick(controller, 0.5);
+  assert.equal(active, 'Walking');
+  assert.ok(Math.abs(motion.position.x) > 0.01);
+  controller.setTalking(true);
+  assert.equal(active, 'Yes');
+  controller.setTalking(false);
+  tick(controller, 1);
+  assert.equal(active, 'Idle');
+  assert.ok(Math.abs(motion.position.x) < 0.001);
   for (const animation of gltf.animations) {
     controller.preview(animation.name); tick(controller, animation.duration + 0.7); assert.equal(active, 'Idle');
   }

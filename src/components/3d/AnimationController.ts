@@ -7,6 +7,7 @@ export class AnimationController {
   private actions = new Map<string, THREE.AnimationAction>();
   private current: THREE.AnimationAction | null = null;
   private talking = false;
+  private walking = false;
   private previewing = false;
   private elapsed = 0;
   private retire = new Map<THREE.AnimationAction, number>();
@@ -25,11 +26,19 @@ export class AnimationController {
     if (event.action === this.current) this.finishPending = true;
   };
   setTalking(talking: boolean) {
+    this.walking = false;
     this.talking = talking; this.previewing = false;
     this.play(talking ? this.resolved.talkName ?? this.resolved.idleName : this.resolved.idleName, false);
   }
+  walk() {
+    this.walking = true;
+    this.talking = false;
+    this.previewing = false;
+    const clip = this.resolved.allNames.find(name => /walk/i.test(name));
+    this.play(clip ?? this.resolved.idleName, false);
+  }
   preview(name: string) {
-    if (this.talking || !this.actions.has(name)) return;
+    if (this.walking || this.talking || !this.actions.has(name)) return;
     this.previewing = true;
     this.play(name, true);
   }
@@ -63,6 +72,8 @@ export class AnimationController {
     if (this.finishPending) { this.finishPending = false; this.setTalking(this.talking); }
     // No matching clip: bounded, frame-rate-independent reaction on a separate parent.
     const procedural = !this.previewing && (this.talking ? !this.resolved.talkName : !this.resolved.idleName);
+    const stride = this.walking ? Math.sin(this.elapsed * 2) * 0.18 : 0;
+    this.motion.position.x = THREE.MathUtils.damp(this.motion.position.x, stride, 12, dt);
     const target = procedural ? Math.sin(this.elapsed * (this.talking ? 7 : 2)) * (this.talking ? 0.035 : 0.008) : 0;
     this.motion.position.y = THREE.MathUtils.damp(this.motion.position.y, this.baseY + target, 14, dt);
     this.motion.rotation.y = THREE.MathUtils.damp(this.motion.rotation.y, procedural && this.talking ? Math.sin(this.elapsed * 3) * 0.06 : 0, 14, dt);

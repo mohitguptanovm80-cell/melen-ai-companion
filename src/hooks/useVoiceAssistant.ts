@@ -45,6 +45,9 @@ export function useVoiceAssistant() {
 
   const reply = useCallback(async (text: string, controller: AbortController) => {
     const valid = () => active.current === controller && !controller.signal.aborted;
+    if (/\b(travel|trip|flight|train|ticket|tickets|walk|walking)\b/i.test(text)) {
+      setCharacterAction('walk');
+    }
     const response = await aiService.generateReply(text, controller.signal);
     if (!valid()) return;
     setAiText(response);

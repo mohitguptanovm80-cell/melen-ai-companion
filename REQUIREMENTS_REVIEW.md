@@ -1,11 +1,11 @@
-# Client requirement review — 5 November 2026
+# Client requirement review — 6 November 2026
 
 Source: `/Users/ankit/Documents/3d.pdf`. This is an implementation and verification report, not a guarantee of client acceptance.
 
 | PDF requirement | Implementation | Evidence / remaining validation |
 | --- | --- | --- |
-| Shared Android/iOS application | Expo SDK 58, React Native, Expo Router | iOS native build succeeded; Android EAS APK builds succeeded. Latest build linked below. Android runtime still needs device testing. |
-| Render supplied RobotExpressive GLB | `CharacterCanvas.tsx`, `ModelManager.ts` | Robot visibly rendered in iOS simulator. Actual asset has 3,237 triangles and 14 clips. |
+| Shared Android/iOS application | Expo SDK 58, React Native, Expo Router | iOS native build succeeded; the corrected optimized Android release launched and rendered on an Android 15 ARM64 emulator. Physical-device testing remains. |
+| Render supplied RobotExpressive GLB | `CharacterCanvas.tsx`, `ModelManager.ts` | Robot visibly rendered in both iOS and Android simulators. Actual asset has 3,237 triangles and 14 clips. |
 | Rotate / zoom | `GestureController.ts` | Orbit/reset observed on iOS; automated pinch transition test passes. Physical two-finger zoom still needs testing. |
 | Embedded animations and idle | `AnimationController.ts` | Actual GLB tests pass; Jump preview observed on iOS and returned to Idle. Crossfades, one-shot previews, speech priority implemented. |
 | Replace GLB without source edits | Fixed bundled path or public model URL | Wrapper normalization tested. Replace file contents while retaining filename. Client model and texture compatibility need native validation. |
@@ -13,7 +13,9 @@ Source: `/Users/ankit/Documents/3d.pdf`. This is an implementation and verificat
 | AI answer and spoken reply | `aiService.ts`, `textToSpeechService.ts` | Real provider requests and native TTS implemented. No canned fallback. Live end-to-end verification remains. |
 | Visible reaction during speech, then idle | Hook + animation controller | TTS callbacks control speaking state; sample uses Yes gesture. Automated tests pass. Live voice evidence remains. |
 | Permission / connectivity errors | Services, hook, error banner | Missing-provider recovery observed; denial/network failure paths tested with mocks. Device permission and offline recovery tests remain. |
-| Delivery: code, README, APK, Android/iOS recordings | Workspace code, README, EAS configuration | Final Android build: https://expo.dev/accounts/mohit14-2/projects/melen-ai-companion/builds/fc1810ea-bdeb-43dd-8b21-4878230a3d78 . Full voice recordings on both platforms remain outstanding. |
+| Delivery: code, README, APK, Android/iOS recordings | Workspace code, README, EAS configuration | Final Android build: https://expo.dev/accounts/mohit14-2/projects/melen-ai-companion/builds/e135d3b8-b6ba-4e0f-9d75-84e48d8cb5c3 . Full voice recordings on both platforms remain outstanding. |
+
+The November 5 APK crashed during GLView creation on Android. Its optimized DEX omitted the constructor required by Expo. Release version code 2 preserves the Expo GL classes via the build configuration. The Jaipur-to-Pune prompt now triggers Walking during processing, then the speaking gesture and idle. Actual ticket fulfillment belongs to the client backend.
 
 ## Checks completed
 

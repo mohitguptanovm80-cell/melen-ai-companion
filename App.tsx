@@ -68,7 +68,7 @@ export default function App() {
             showsHorizontalScrollIndicator={false}
           >
             {[
-              "Hi, how was your day?",
+              "Book my ticket from Jaipur to Pune",
               "Tell me a robot joke!",
               "Who are you?",
             ].map((prompt) => (

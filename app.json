@@ -28,7 +28,8 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "versionCode": 2
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -42,7 +43,15 @@
         }
       ],
       "expo-router",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "extraProguardRules": "# Expo constructs GLView through reflection. GL also has JNI entry points.\n-keep class expo.modules.gl.** { *; }"
+          }
+        }
+      ]
     ],
     "scheme": "melen",
     "platforms": [

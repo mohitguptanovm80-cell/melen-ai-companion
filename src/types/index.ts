@@ -6,7 +6,7 @@ export type AssistantState =
   | 'speaking'
   | 'error';
 
-export type CharacterAction = 'idle' | 'talk' | 'gesture';
+export type CharacterAction = 'idle' | 'talk' | 'gesture' | 'walk';
 
 export interface ModelMetadata {
   fileName: string;

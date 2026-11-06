@@ -68,7 +68,10 @@ export class ModelManager {
     });
     return motion;
   }
-  setCharacterAction(action: CharacterAction) { this.animator?.setTalking(action === 'talk'); }
+  setCharacterAction(action: CharacterAction) {
+    if (action === 'walk') this.animator?.walk();
+    else this.animator?.setTalking(action === 'talk');
+  }
   playClip(name: string) { this.animator?.preview(name); }
   update(delta: number) { this.animator?.update(delta); }
   dispose() {
