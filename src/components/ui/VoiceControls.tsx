@@ -119,7 +119,7 @@ export const VoiceControls: React.FC<VoiceControlsProps> = ({ state, onPress }) 
 const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
-    marginBottom: 28,
+    marginBottom: 12,
   },
   pillContainer: {
     flexDirection: 'row',

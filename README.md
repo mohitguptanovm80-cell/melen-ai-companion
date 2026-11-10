@@ -20,28 +20,28 @@ npm run android
 
 The app uses Expo Router (`src/app`), `expo-gl`, `expo-asset`, `expo-file-system`, `expo-audio`, and `expo-speech`. Native directories are generated and ignored by Git. After native dependency or plugin changes, rebuild the development app. Web is not an acceptance target for this assignment.
 
-## Connect a real voice provider
+## Azure AI connection
 
-1. Open **Voice setup** in the app.
-2. Enter an HTTPS OpenAI-compatible API base URL, API key, chat model, and transcription model.
-3. Select **Use for this session**. Configuration is validated locally; provider access is verified by the first request.
-4. Tap the microphone, grant permission, speak, then tap again to finish. Recordings automatically finish after 60 seconds.
-5. The actual transcription appears on screen. The AI response is displayed and spoken; animation begins when speech starts and returns to idle when speech ends.
-6. Tap during processing to cancel, or during speech to interrupt. In an error state, tap to retry. Permission errors offer a Settings shortcut.
+The project uses the client’s Azure resource at `https://melenai-resource.openai.azure.com/openai/v1`, with `melenai-gpt-6-luna` for chat and `gpt-realtime-2.1-mini` for voice recognition. The actual credential lives in ignored `.env`, outside source control and the mobile bundle. On another development machine, copy `.env.example` to `.env` and supply the key.
 
-The defaults retain the original project's OpenAI models (`gpt-4o-mini` and `whisper-1`). Model access, availability, billing, and compatible endpoint support depend on your provider. They are editable in the app.
+Run `npm start` and reload the mobile app. The app automatically uses the Expo development server’s address; no key entry or speaker-test step is needed. The phone and computer must share a trusted network (or the same Expo tunnel). Send a typed message or tap the microphone, speak, and tap again to finish. Recordings finish automatically after 60 seconds. Replies are displayed and spoken using the device voice. Cancel with the microphone button while processing or speaking.
 
-The key is held only in JavaScript memory, cleared on disconnect or process exit, and never written to files, persistent storage, environment variables, logs, or the app bundle. Enter a dedicated evaluation credential on your own device. The setup form identifies the destination before sending audio or text. This direct-provider mode is for the assignment evaluation; production should use the client's authenticated backend. No new backend has been implemented.
+`server/azure.cjs` runs inside Metro and calls Azure with the server-only key. It accepts only chat and transcription operations, rejects browser origins, limits uploads, and cleans temporary audio files. Its bundled server FFmpeg converts native M4A recordings to 24 kHz mono PCM, then sends them through Azure Realtime over WebSocket. The Realtime model is instructed to transcribe speech verbatim; its text goes to the chat deployment. It is not sent to the incompatible `/audio/transcriptions` Azure endpoint. There are no canned replies or random transcripts. Failures remain visible and retryable.
 
-There are **no random transcripts or canned AI fallbacks**. Missing configuration, empty speech, invalid credentials, quota failures, connection failures, and timeouts produce visible recoverable errors. TTS uses the platform voice. On physical iPhones, disable Silent Mode when demonstrating Expo Speech.
+### Connected Android debug APK over USB
 
-The adapter uses these OpenAI-compatible contracts:
+Native debug APKs without Expo Dev Launcher use the JavaScript bundle origin when Expo's manifest does not provide a server address. For the connected phone, the ignored `.env` currently explicitly sets `EXPO_PUBLIC_AI_BACKEND_URL=http://localhost:8083/api/ai` and uses a separate, loopback-only AI server:
 
-- `POST {baseUrl}/audio/transcriptions`: multipart `file` (M4A audio) and `model`; response `{ "text": "..." }`.
-- `POST {baseUrl}/chat/completions`: JSON `model` and `messages`; response `choices[0].message.content`.
-- Bearer authorization for both. `providerService.ts` owns configuration, cancellation, timeout, and HTTP errors.
+```sh
+npm run ai:usb
+adb reverse tcp:8081 tcp:8081
+adb reverse tcp:8083 tcp:8083
+npm start
+```
 
-Once the client shares its backend contract, adapt these service methods without changing the avatar or conversation UI.
+Keep both servers running and the phone connected by USB. Reload Melen after changing the address. The AI server listens only on your computer's loopback interface. Remove the `EXPO_PUBLIC_AI_BACKEND_URL` override to return to automatic discovery, or replace it with your deployed HTTPS backend for release builds. A connected OPPO Android debug APK successfully sent a typed question and displayed the live Azure response after this fix.
+
+This bridge is for a trusted local development network. It is not an authenticated public production server. For an installed release, deploy these operations behind the client’s authenticated backend and configure `EXPO_PUBLIC_AI_BACKEND_URL` before building. The key must stay on that backend. An APK cannot use the local `.env` secret directly. Device microphone/speaker checks remain necessary on Android and iOS.
 
 ## Replace the character without source-code edits
 
@@ -51,7 +51,7 @@ Alternatively, copy `.env.example` to `.env.local`, set `EXPO_PUBLIC_MODEL_URL` 
 
 Models are normalized using a wrapper so authored transforms and animation bindings remain intact. The camera fits the normalized bounds. Every embedded clip appears in the inspector, including unnamed clips assigned stable labels. Idle selection prioritizes `Idle`, then rest/breathing/waiting/standing names. Speech selection prioritizes talking/speaking clips, then gestures, `Yes`, or `Wave`. Unknown clips are not blindly selected as idle. Missing idle/speech clips use a bounded procedural sway/bob; this does not create missing skeletal animation.
 
-With a voice provider connected, speak or tap **Book my ticket from Jaipur to Pune**. While the provider prepares the reply, the robot plays its embedded Walking clip and takes a small step across the viewport. When speech starts, it crossfades to its speaking gesture. Completion, cancellation, and errors restore idle. This demonstrates the travel request visually. Actual ticket fulfillment requires the client backend.
+With a voice provider connected, say **Book my ticket from Jaipur to Pune**. While the provider prepares the reply, the robot plays its embedded Walking clip and takes a small step across the viewport. When speech starts, it crossfades to its speaking gesture. Completion, cancellation, and errors restore idle. This demonstrates the travel request visually. Actual ticket fulfillment requires the client backend.
 
 The sample has 14 clips and Angry/Surprised/Sad facial morph targets. Its `Yes` gesture is used during speech because it has no dedicated talking clip. Clip previews play once and return to the base state. Speech overrides previews; previews are ignored during speech. Transitions crossfade without changing clip speed. Active-clip highlighting reflects the mixer state.
 

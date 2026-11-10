@@ -1,9 +1,16 @@
 import * as Speech from 'expo-speech';
+import { setAudioModeAsync } from 'expo-audio';
 
 export class TextToSpeechService {
   public async speak(text: string, signal: AbortSignal, onStart: () => void): Promise<void> {
     if (signal.aborted) return;
     await Speech.stop();
+    if (signal.aborted) return;
+    await setAudioModeAsync({
+      allowsRecording: false,
+      playsInSilentMode: true,
+      shouldRouteThroughEarpiece: false,
+    });
     if (signal.aborted) return;
     return new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -29,7 +36,8 @@ export class TextToSpeechService {
       if (signal.aborted) { cancel(); return; }
       try {
         Speech.speak(text, {
-          language: 'en-US', rate: 0.95,
+          language: 'en-US', rate: 0.95, volume: 1,
+          useApplicationAudioSession: true,
           onStart: () => { if (!settled) { started = true; clearTimeout(startTimer); onStart(); } },
           onDone: () => finish(),
           onStopped: () => finish(),

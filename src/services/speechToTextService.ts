@@ -1,4 +1,4 @@
-import { AudioModule, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
+import { AudioModule, RecordingPresets, getRecordingPermissionsAsync, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
 import type { AudioRecorder } from 'expo-audio';
 import { File } from 'expo-file-system';
 import { Linking } from 'react-native';
@@ -13,10 +13,16 @@ export class SpeechToTextService {
   private recorder: AudioRecorder | null = null;
   private generation = 0;
 
-  public async startRecording(): Promise<void> {
+  public async startRecording(onPermissionPrompt: (pending: boolean) => void = () => {}): Promise<void> {
     getProvider();
     const generation = ++this.generation;
-    const { granted } = await requestRecordingPermissionsAsync();
+    let { granted } = await getRecordingPermissionsAsync();
+    // Android can pause the Activity even when requesting an already granted permission.
+    if (!granted) {
+      onPermissionPrompt(true);
+      try { ({ granted } = await requestRecordingPermissionsAsync()); }
+      finally { onPermissionPrompt(false); }
+    }
     if (generation !== this.generation) return;
     if (!granted) throw new ServiceError('Microphone permission is denied. Enable it in Settings, then tap Retry.', 'permission');
     await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
@@ -56,7 +62,8 @@ export class SpeechToTextService {
       await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
       if (!uri) throw new ServiceError('The recording is empty. Please try again.');
       const body = new FormData();
-      body.append('file', { uri, name: 'recording.m4a', type: 'audio/mp4' } as unknown as Blob);
+      // Expo SDK 58 uploads File/Blob values, not the legacy React Native { uri } object.
+      body.append('file', new File(uri), 'recording.m4a');
       body.append('model', getProvider().transcriptionModel);
       // fetch supplies the multipart boundary. Do not manually set Content-Type.
       const data = await providerRequest('/audio/transcriptions', body, signal) as { text?: unknown };

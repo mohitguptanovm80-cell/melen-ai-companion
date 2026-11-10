@@ -16,6 +16,7 @@ export function useVoiceAssistant() {
   const [permissionDenied, setPermissionDenied] = useState(false);
   const active = useRef<AbortController | null>(null);
   const busy = useRef(false);
+  const permissionPrompt = useRef(false);
   const recordingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transition = useCallback((next: AssistantState) => { stateRef.current = next; setState(next); }, []);
   const clearTimer = useCallback(() => {
@@ -83,8 +84,9 @@ export function useVoiceAssistant() {
     const controller = new AbortController(); active.current = controller;
     transition('preparing');
     try {
-      await sttService.startRecording();
+      await sttService.startRecording(pending => { permissionPrompt.current = pending; });
       if (active.current !== controller || controller.signal.aborted) return;
+      if (AppState.currentState !== 'active') { await cancel(); return; }
       transition('listening');
       recordingTimer.current = setTimeout(() => { void finishRecordingAndProcess(); }, 60000);
     } catch (error) { fail(error, controller); }
@@ -92,6 +94,8 @@ export function useVoiceAssistant() {
   }, [cancel, clearError, fail, finishRecordingAndProcess, transition]);
 
   const askQuestion = useCallback(async (text: string) => {
+    text = text.trim();
+    if (!text) return;
     if (busy.current || !['idle', 'error'].includes(stateRef.current)) return;
     clearError(); setUserText(text); setAiText(''); transition('thinking');
     const controller = new AbortController(); active.current = controller;
@@ -100,7 +104,8 @@ export function useVoiceAssistant() {
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', next => {
-      if (next === 'background') void cancel();
+      // A microphone permission dialog pauses Android's Activity too.
+      if (next === 'background' && !permissionPrompt.current) void cancel();
       if (next === 'active' && stateRef.current === 'error') clearError();
     });
     return () => {

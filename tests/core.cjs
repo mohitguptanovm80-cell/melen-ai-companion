@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const THREE = require('three');
 const { resolveAnimationClips, normalizeModel } = require('../.test-build/src/utils/modelHelpers');
 const { AnimationController } = require('../.test-build/src/components/3d/AnimationController');
-const { configureProvider, clearProvider, getProvider, providerRequest } = require('../.test-build/src/services/providerService');
+const { configureBackend, configureProvider, clearProvider, getProvider, providerRequest } = require('../.test-build/src/services/providerService');
 const { AIService } = require('../.test-build/src/services/aiService');
 const clip = name => new THREE.AnimationClip(name, 0.5, [new THREE.NumberKeyframeTrack('.rotation[x]', [0, 0.5], [0, 0.1])]);
 const tick = (controller, seconds) => { for (let i = 0; i < seconds * 60; i++) controller.update(1 / 60); };
@@ -86,4 +86,31 @@ test('real request path sends text, rejects blank replies and exposes offline/au
     global.fetch = async () => ({ ok: false, status: 401 });
     await assert.rejects(providerRequest('/test', '{}', new AbortController().signal), /rejected access/);
   } finally { global.fetch = originalFetch; clearProvider(); }
+});
+
+test('backend mode keeps Azure credentials out of mobile requests and preserves actionable errors', async () => {
+  const originalFetch = global.fetch;
+  assert.throws(() => configureBackend('http://example.com/api/ai'));
+  configureBackend('http://192.168.1.2:8081/api/ai', true);
+  try {
+    global.fetch = async (url, options) => {
+      assert.equal(url, 'http://192.168.1.2:8081/api/ai/chat/completions');
+      assert.equal(options.headers.Authorization, undefined);
+      assert.equal(options.headers['api-key'], undefined);
+      return { ok: true, json: async () => ({ choices: [{ message: { content: 'Live backend reply' } }] }) };
+    };
+    assert.equal(await new AIService().generateReply('Hello', new AbortController().signal), 'Live backend reply');
+    global.fetch = async () => ({ ok: false, json: async () => ({ error: { message: 'Azure deployment unavailable.' } }) });
+    await assert.rejects(new AIService().generateReply('Hello', new AbortController().signal), /Azure deployment unavailable/);
+  } finally { global.fetch = originalFetch; clearProvider(); }
+});
+
+test('AI server discovery supports native debug builds without an Expo manifest', () => {
+  const { resolveBackendUrl } = require('../.test-build/src/utils/backendUrl');
+  assert.equal(resolveBackendUrl(undefined, undefined, 'http://localhost:8081/index.bundle?platform=android', true), 'http://localhost:8081/api/ai');
+  assert.equal(resolveBackendUrl(undefined, '192.168.1.3:8081', undefined, true), 'http://192.168.1.3:8081/api/ai');
+  assert.equal(resolveBackendUrl(undefined, 'unused:8081', 'https://example.exp.direct/index.bundle', true), 'https://example.exp.direct/api/ai');
+  assert.equal(resolveBackendUrl(undefined, undefined, 'file:///app/index.bundle', true), null);
+  assert.equal(resolveBackendUrl(undefined, '192.168.1.3:8081', 'http://localhost:8081/index.bundle', false), null);
+  assert.equal(resolveBackendUrl('https://api.example.com/api/ai', undefined, undefined, false), 'https://api.example.com/api/ai');
 });

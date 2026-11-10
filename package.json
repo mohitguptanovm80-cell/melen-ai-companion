@@ -19,12 +19,14 @@
     "expo-router": "~58.0.30",
     "expo-speech": "~58.0.3",
     "expo-status-bar": "~58.0.4",
+    "ffmpeg-static": "^5.3.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-native": "0.88.1",
     "react-native-safe-area-context": "~5.11.1",
     "react-native-screens": "~4.30.1",
-    "three": "^0.187.0"
+    "three": "^0.187.0",
+    "ws": "^8.22.2"
   },
   "devDependencies": {
     "@react-three/drei": "^10.7.9",
@@ -39,7 +41,8 @@
     "ios": "expo run:ios",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/test.cjs"
+    "test": "node scripts/test.cjs",
+    "ai:usb": "node --env-file=.env scripts/run-ai-server.cjs"
   },
   "private": true
 }

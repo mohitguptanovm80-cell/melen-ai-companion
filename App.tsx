@@ -1,3 +1,4 @@
+import './src/services/backendSetup';
 import React, { useRef, useState } from "react";
 import {
   StyleSheet,
@@ -5,6 +6,9 @@ import {
   Text,
   TouchableOpacity,
   ScrollView,
+  KeyboardAvoidingView,
+  Platform,
+  TextInput,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
@@ -19,21 +23,35 @@ import { ModelInspectorBadge } from "./src/components/ui/ModelInspectorBadge";
 import { NetworkStatusBar } from "./src/components/ui/NetworkStatusBar";
 import { useVoiceAssistant } from "./src/hooks/useVoiceAssistant";
 import { ModelMetadata } from "./src/types";
+import { isProviderConfigured } from "./src/services/providerService";
 
 export default function App() {
   const canvasRef = useRef<CharacterCanvasRef | null>(null);
   const [metadata, setMetadata] = useState<ModelMetadata | null>(null);
   const voice = useVoiceAssistant();
+  const [setupVisible, setSetupVisible] = useState(false);
+  const [draft, setDraft] = useState("");
+  const canSend = ["idle", "error"].includes(voice.state);
+  const ask = (text: string) => {
+    if (!text.trim() || !canSend) return false;
+    if (!isProviderConfigured()) { setSetupVisible(true); return false; }
+    void voice.askQuestion(text.trim());
+    return true;
+  };
+  const send = () => { if (ask(draft)) setDraft(""); };
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.container}>
         <StatusBar style="light" />
+        <KeyboardAvoidingView style={styles.body} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         <ModelInspectorBadge
           metadata={metadata}
           onResetCamera={() => canvasRef.current?.resetCamera()}
           onSelectClip={(name) => canvasRef.current?.playCustomClip(name)}
         />
         <ProviderSetup
+          visible={setupVisible}
+          onVisibleChange={setSetupVisible}
           disabled={!["idle", "error"].includes(voice.state)}
           onChanged={voice.clearError}
         />
@@ -60,37 +78,47 @@ export default function App() {
             />
           </ScrollView>
         </View>
-        {voice.state === "idle" && !voice.userText && (
-          <ScrollView
-            horizontal
-            style={styles.prompts}
-            contentContainerStyle={styles.promptContent}
-            showsHorizontalScrollIndicator={false}
+        <VoiceControls state={voice.state} onPress={() => {
+          if (canSend && !isProviderConfigured()) setSetupVisible(true);
+          else void voice.handleMicPress();
+        }} />
+        <View style={styles.composer}>
+          <TextInput
+            style={styles.messageInput}
+            value={draft}
+            onChangeText={setDraft}
+            placeholder="Type a message…"
+            placeholderTextColor="#94a3b8"
+            accessibilityLabel="Message to Melen"
+            editable={canSend}
+            returnKeyType="send"
+            onSubmitEditing={send}
+          />
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Send message"
+            accessibilityState={{ disabled: !canSend || !draft.trim() }}
+            disabled={!canSend || !draft.trim()}
+            onPress={send}
+            style={[styles.sendButton, (!canSend || !draft.trim()) && styles.sendDisabled]}
           >
-            {[
-              "Book my ticket from Jaipur to Pune",
-              "Tell me a robot joke!",
-              "Who are you?",
-            ].map((prompt) => (
-              <TouchableOpacity
-                key={prompt}
-                accessibilityRole="button"
-                style={styles.chip}
-                onPress={() => voice.askQuestion(prompt)}
-              >
-                <Text style={styles.promptText}>{prompt}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        )}
-        <VoiceControls state={voice.state} onPress={voice.handleMicPress} />
+            <Text style={styles.sendText}>Send</Text>
+          </TouchableOpacity>
+        </View>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </SafeAreaProvider>
   );
 }
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#0f172a" },
-  viewport: { flex: 1, minHeight: 140 },
+  body: { flex: 1 },
+  viewport: { flex: 1, minHeight: 0 },
+  composer: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 16, paddingBottom: 12 },
+  messageInput: { flex: 1, minWidth: 0, minHeight: 48, borderRadius: 24, borderWidth: 1, borderColor: "#475569", backgroundColor: "#1e293b", color: "#fff", paddingHorizontal: 16, fontSize: 16 },
+  sendButton: { minHeight: 48, paddingHorizontal: 18, borderRadius: 24, backgroundColor: "#6366f1", justifyContent: "center" },
+  sendDisabled: { opacity: 0.4 },
+  sendText: { color: "#fff", fontWeight: "600", fontSize: 15 },
   hint: {
     color: "#94a3b8",
     fontSize: 11,
